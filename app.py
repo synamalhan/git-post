@@ -2,7 +2,7 @@ import streamlit as st
 import os
 from datetime import datetime, timedelta
 from github_utils import fetch_github_activity
-from ollama_generator import generate_post_with_ollama
+from ollama_generator import generate_post_with_ollama, call_ollama
 import traceback
 
 # Page configuration
@@ -40,12 +40,33 @@ st.markdown("""
         border-left: 4px solid #667eea;
         margin: 0.5rem 0;
     }
+    .spotlight-card {
+        background: #fff3cd;
+        padding: 1rem;
+        border-radius: 0.5rem;
+        border-left: 4px solid #ffc107;
+        margin: 0.5rem 0;
+    }
     .success-message {
         background: #d4edda;
         color: #155724;
         padding: 1rem;
         border-radius: 0.5rem;
         border-left: 4px solid #28a745;
+    }
+    .chat-message {
+        background: #e3f2fd;
+        padding: 0.75rem;
+        border-radius: 0.5rem;
+        margin: 0.5rem 0;
+        border-left: 3px solid #2196f3;
+    }
+    .ai-response {
+        background: #f3e5f5;
+        padding: 0.75rem;
+        border-radius: 0.5rem;
+        margin: 0.5rem 0;
+        border-left: 3px solid #9c27b0;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -63,6 +84,10 @@ if 'github_data' not in st.session_state:
     st.session_state.github_data = None
 if 'generated_post' not in st.session_state:
     st.session_state.generated_post = None
+if 'chat_history' not in st.session_state:
+    st.session_state.chat_history = []
+if 'spotlight_projects' not in st.session_state:
+    st.session_state.spotlight_projects = []
 
 # Sidebar for instructions
 with st.sidebar:
@@ -73,6 +98,7 @@ with st.sidebar:
     3. **Date Range**: Select a meaningful period (e.g., last month)
     4. **Projects**: Choose 2-3 spotlight projects for maximum impact
     5. **Generate**: Let AI create your professional LinkedIn post
+    6. **Refine**: Chat with AI to improve your post
     """)
     
     st.markdown("### 🔧 Requirements")
@@ -125,6 +151,8 @@ with col1:
                     github_data = fetch_github_activity(username, start_date, end_date)
                     if github_data:
                         st.session_state.github_data = github_data
+                        st.session_state.generated_post = None  # Reset post when new data is fetched
+                        st.session_state.chat_history = []  # Reset chat history
                         st.success(f"Found {len(github_data)} repositories with activity!")
                     else:
                         st.warning("No repositories found with activity in the specified date range")
@@ -136,8 +164,7 @@ with col2:
     st.markdown("### 🎯 Project Selection & Post Generation")
     
     if st.session_state.github_data:
-        # Display fetched repositories
-        st.markdown("#### 📂 Available Repositories")
+        # Project selection
         repo_options = []
         for item in st.session_state.github_data:
             repo = item['repo']
@@ -145,7 +172,6 @@ with col2:
             repo_display = f"**{repo}** ({commits_count} commits)"
             repo_options.append((repo_display, repo))
         
-        # Project selection
         spotlight_projects = st.multiselect(
             "🌟 Select Spotlight Projects (2-3 recommended)",
             options=[option[0] for option in repo_options],
@@ -160,19 +186,7 @@ with col2:
                     spotlight_repo_names.append(repo_name)
                     break
         
-        # Show selected projects preview
-        if spotlight_repo_names:
-            st.markdown("#### ✨ Spotlight Projects Preview")
-            for repo_name in spotlight_repo_names:
-                for item in st.session_state.github_data:
-                    if item['repo'] == repo_name:
-                        st.markdown(f"""
-                        <div class="project-card">
-                            <strong>{repo_name}</strong><br>
-                            <small>{item.get('description', 'No description')}</small><br>
-                            <small>🔗 {item['url']}</small>
-                        </div>
-                        """, unsafe_allow_html=True)
+        st.session_state.spotlight_projects = spotlight_repo_names
         
         # Generate post button
         if st.button("🤖 Generate LinkedIn Post", disabled=len(spotlight_repo_names) == 0):
@@ -201,6 +215,7 @@ with col2:
                         
                         if generated_post:
                             st.session_state.generated_post = generated_post
+                            st.session_state.chat_history = []  # Reset chat history for new post
                             st.markdown("""
                             <div class="success-message">
                                 ✅ LinkedIn post generated successfully!
@@ -213,12 +228,72 @@ with col2:
                         st.error(f"Error generating post: {str(e)}")
                         st.error("Make sure Ollama is installed and running locally")
 
-# Generated post display
+# Project Details Section
+if st.session_state.github_data:
+    st.markdown("---")
+    st.markdown("### 📂 Project Details")
+    
+    # Separate projects into spotlight and non-spotlight
+    spotlight_data = []
+    other_data = []
+    
+    for item in st.session_state.github_data:
+        if item['repo'] in st.session_state.spotlight_projects:
+            spotlight_data.append(item)
+        else:
+            other_data.append(item)
+    
+    col_spotlight, col_other = st.columns([1, 1])
+    
+    with col_spotlight:
+        with st.expander(f"🌟 Spotlight Projects ({len(spotlight_data)})", expanded=True):
+            if spotlight_data:
+                for item in spotlight_data:
+                    st.markdown(f"""
+                    <div class="spotlight-card">
+                        <h4>{item['repo']}</h4>
+                        <p><strong>Description:</strong> {item.get('description', 'No description')}</p>
+                        <p><strong>Language:</strong> {item.get('language', 'Not specified')}</p>
+                        <p><strong>Stars:</strong> {item.get('stars', 0)} ⭐</p>
+                        <p><strong>Commits:</strong> {len(item['commits'])}</p>
+                        <p><strong>Recent commits:</strong></p>
+                        <ul>
+                    """, unsafe_allow_html=True)
+                    
+                    for commit in item['commits'][:3]:
+                        st.markdown(f"<li>{commit}</li>", unsafe_allow_html=True)
+                    
+                    st.markdown(f"""
+                        </ul>
+                        <p><strong>URL:</strong> <a href="{item['url']}" target="_blank">{item['url']}</a></p>
+                    </div>
+                    """, unsafe_allow_html=True)
+            else:
+                st.info("No spotlight projects selected")
+    
+    with col_other:
+        with st.expander(f"📁 Other Projects ({len(other_data)})", expanded=False):
+            if other_data:
+                for item in other_data:
+                    st.markdown(f"""
+                    <div class="project-card">
+                        <h4>{item['repo']}</h4>
+                        <p><strong>Description:</strong> {item.get('description', 'No description')}</p>
+                        <p><strong>Language:</strong> {item.get('language', 'Not specified')}</p>
+                        <p><strong>Stars:</strong> {item.get('stars', 0)} ⭐</p>
+                        <p><strong>Commits:</strong> {len(item['commits'])}</p>
+                        <p><strong>URL:</strong> <a href="{item['url']}" target="_blank">{item['url']}</a></p>
+                    </div>
+                    """, unsafe_allow_html=True)
+            else:
+                st.info("All projects are in spotlight")
+
+# Generated post display and chat interface
 if st.session_state.generated_post:
     st.markdown("---")
     st.markdown("### 📝 Generated LinkedIn Post")
     
-    col_post, col_actions = st.columns([3, 1])
+    col_post, col_chat = st.columns([2, 1])
     
     with col_post:
         st.text_area(
@@ -227,14 +302,8 @@ if st.session_state.generated_post:
             height=300,
             help="Copy this content to your LinkedIn post"
         )
-    
-    with col_actions:
-        st.markdown("#### 🔧 Actions")
         
-        # Copy button simulation (Streamlit limitation)
-        st.info("💡 Tip: Select all text in the box and copy (Ctrl+C / Cmd+C)")
-        
-        # Character count
+        # Post metrics
         char_count = len(st.session_state.generated_post)
         st.metric("Character Count", char_count)
         
@@ -244,10 +313,74 @@ if st.session_state.generated_post:
             st.success("✅ Good length for LinkedIn!")
         else:
             st.info("ℹ️ Post is on the shorter side")
+    
+    with col_chat:
+        st.markdown("#### 💬 Chat with AI")
+        st.markdown("Refine your post by chatting with the AI")
+        
+        # Chat input
+        user_message = st.text_input(
+            "Ask for changes:",
+            placeholder="e.g., Make it more casual, add more emojis, shorten it...",
+            key="chat_input"
+        )
+        
+        if st.button("💬 Send Message") and user_message:
+            # Add user message to chat history
+            st.session_state.chat_history.append({"role": "user", "content": user_message})
+            
+            with st.spinner("AI is thinking..."):
+                try:
+                    # Create a prompt for refining the post
+                    refine_prompt = f"""You are helping refine a LinkedIn post. Here's the current post:
+
+{st.session_state.generated_post}
+
+The user wants this change: {user_message}
+
+Please provide the updated LinkedIn post that incorporates their feedback. Return ONLY the updated post, no explanations or additional text."""
+                    
+                    # Get AI response
+                    ai_response = call_ollama(refine_prompt)
+                    
+                    if ai_response:
+                        # Update the generated post
+                        st.session_state.generated_post = ai_response.strip()
+                        # Add AI response to chat history
+                        st.session_state.chat_history.append({"role": "ai", "content": "Post updated successfully!"})
+                        st.rerun()
+                    else:
+                        st.error("Failed to get AI response")
+                        
+                except Exception as e:
+                    st.error(f"Error communicating with AI: {str(e)}")
+        
+        # Display chat history
+        if st.session_state.chat_history:
+            st.markdown("#### 💭 Chat History")
+            for i, message in enumerate(st.session_state.chat_history[-5:]):  # Show last 5 messages
+                if message["role"] == "user":
+                    st.markdown(f"""
+                    <div class="chat-message">
+                        <strong>You:</strong> {message["content"]}
+                    </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    st.markdown(f"""
+                    <div class="ai-response">
+                        <strong>AI:</strong> {message["content"]}
+                    </div>
+                    """, unsafe_allow_html=True)
+        
+        # Clear chat button
+        if st.button("🗑️ Clear Chat"):
+            st.session_state.chat_history = []
+            st.rerun()
         
         # Regenerate button
         if st.button("🔄 Regenerate Post"):
             st.session_state.generated_post = None
+            st.session_state.chat_history = []
             st.rerun()
 
 # Footer

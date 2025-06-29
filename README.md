@@ -23,7 +23,7 @@ Transform your GitHub activity into engaging LinkedIn posts using AI! This Strea
 
 ```bash
 # Clone or download the project files
-git clone <your-repo-url>
+git clone https://github.com/synamalhan/git-post.git
 cd github-linkedin-generator
 
 # Install Python dependencies
